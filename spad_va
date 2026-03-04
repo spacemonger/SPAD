@@ -1,0 +1,158 @@
+/*
+  Author: Frank Li
+  Module: spad_va
+  Description:
+    Behavioral (compact) Verilog-A model of a Single-Photon Avalanche Diode (SPAD).
+
+    Key ideas (matches the schematic intent):
+      - Below breakdown: no avalanche path; terminals mainly show junction capacitance (and optional tiny leakage).
+      - Above breakdown (armed): a photon "event" may trigger an avalanche.
+      - Once triggered: avalanche current flows through an effective series path (Rspad + R_sense)
+        and is clamped around a breakdown-like voltage V_BV (Thevenin-like branch).
+      - Sustain: avalanche stays on if the sensed drop across R_sense exceeds a threshold
+        (equivalently if avalanche current exceeds I_sustain).
+
+    IMPORTANT:
+      - Photon input is treated as a CONTROL input (event), not a physical electrical injection into anode.
+        This avoids the non-physical output follows photon pulse artifact.
+*/
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module spad_va(anode, cathode, photon);
+
+  // -----------------------
+  // External terminals
+  // -----------------------
+  inout anode, cathode;
+  input photon;
+  electrical anode, cathode, photon;
+
+  // -----------------------
+  // User parameters
+  // -----------------------
+  parameter real Vbr        = 9.75;       // Breakdown voltage for arming (V)
+  parameter real V_BV       = 9.75;       // Breakdown clamp source in avalanche branch (V)
+  parameter real Rspad      = 600.0;      // Series resistance in avalanche path (ohm)
+  parameter real R_sense    = 1e3;        // Sense resistance used for sustain logic (ohm)
+  parameter real C0         = 100e-15;    // Junction capacitance (F)
+
+  parameter real Vph_th     = 0.2;        // Photon trigger threshold (V)
+  parameter real t_SA       = 200e-12;    // Duration of SA "closed" pulse after photon edge (s)
+
+  // Sustain condition can be expressed as a current threshold OR a sense-voltage threshold.
+  parameter real I_sustain  = 100e-6;     // Sustain current threshold (A)
+  // If you prefer voltage thresholding like the schematic, this is the equivalent:
+  // V_sense_th = I_sustain * R_sense
+  // (We compute it internally to stay consistent.)
+  parameter real R_leak     = 1e15;       // Optional tiny leakage across terminals (ohm). Set huge.
+
+  // -----------------------
+  // Internal "switch states"
+  // -----------------------
+  real S1_open;       // 1 = armed (flowchart: S1 open), 0 = disarmed
+  real SA_closed;     // short trigger pulse after photon event while armed
+  real SS_closed;     // sustain condition (sense drop exceeds threshold)
+  real avalanche_on;  // latched avalanche state (0/1)
+
+  // -----------------------
+  // Internal helpers
+  // -----------------------
+  real Vka;
+  real t_last_ph;
+  real I_av_cmd;      // commanded avalanche current (if avalanche branch were ON)
+  real I_av;          // actual avalanche current (0 if avalanche_on==0)
+  real V_sense;       // drop across R_sense due to avalanche current
+  real V_sense_th;
+
+  analog begin
+
+    // Initialize internal timing/state
+    @(initial_step) begin
+      t_last_ph    = -1.0;
+      avalanche_on = 0.0;
+    end
+
+    // -------------------------------
+    // 1) Always-on passive behavior
+    // -------------------------------
+    Vka = V(cathode, anode);
+
+    // Junction capacitance (always present)
+    I(cathode, anode) <+ C0 * ddt(Vka);
+
+    // Optional tiny leakage (helps DC convergence; negligible physically)
+    if (R_leak < 1e30) begin
+      I(cathode, anode) <+ Vka / R_leak;
+    end
+
+    // -------------------------------
+    // 2) Switch/event logic (Figure 4-5 style)
+    // -------------------------------
+
+    // S1_open = armed when reverse bias above breakdown
+    S1_open = (Vka > Vbr) ? 1.0 : 0.0;
+
+    // Photon "is high" -> implement as a rising edge across Vph_th
+    // (Event-based trigger is what you want for a SPAD.)
+    @(cross(V(photon) - Vph_th, +1)) begin
+      if (S1_open > 0.5) begin
+        t_last_ph = $abstime;
+      end
+    end
+
+    // SA_closed: a short pulse after the photon edge (models S_Avalanche closing briefly)
+    SA_closed =
+      ((S1_open > 0.5) &&
+       (t_last_ph >= 0.0) &&
+       (($abstime - t_last_ph) < t_SA)) ? 1.0 : 0.0;
+
+    // -------------------------------
+    // 3) Avalanche branch model (emulates Rspad + R_sense + V_BV)
+    // -------------------------------
+    //
+    // Interpret the schematics V_BV + series resistors as a Thevenin-like branch:
+    //   I_av_cmd = (Vka - V_BV) / (Rspad + R_sense), clamped to >= 0.
+    //
+    I_av_cmd = (Vka - V_BV) / (Rspad + R_sense);
+    if (I_av_cmd < 0.0) I_av_cmd = 0.0;
+
+    // Actual avalanche current exists only if avalanche is ON
+    I_av = (avalanche_on > 0.5) ? I_av_cmd : 0.0;
+
+    // Sense voltage across R_sense (used for sustain switch logic)
+    V_sense    = I_av * R_sense;
+    V_sense_th = I_sustain * R_sense;
+
+    // SS_closed: sustain when the sensed drop exceeds threshold
+    // (This matches your pseudocode: V(R_S) > threshold of S_S.)
+    SS_closed = (V_sense > V_sense_th) ? 1.0 : 0.0;
+
+    // -------------------------------
+    // 4) Avalanche latch (start/hold/reset)
+    // -------------------------------
+    //
+    // Start: SA_closed pulse triggers avalanche_on.
+    // Hold: avalanche_on stays on if SS_closed is true.
+    // Reset: otherwise off, and always off if not armed.
+    //
+    if (S1_open <= 0.5) begin
+      avalanche_on = 0.0;
+    end else if (SA_closed > 0.5) begin
+      avalanche_on = 1.0;
+    end else if ((avalanche_on > 0.5) && (SS_closed > 0.5)) begin
+      avalanche_on = 1.0;
+    end else begin
+      avalanche_on = 0.0;
+    end
+
+    // -------------------------------
+    // 5) Contribute avalanche current to the terminals
+    // -------------------------------
+    if (avalanche_on > 0.5) begin
+      I(cathode, anode) <+ I_av_cmd;
+    end
+
+  end
+endmodule
