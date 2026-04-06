@@ -1,0 +1,533 @@
+;============================================================= 
+; sde_dvs.cmd  --  2D SPAD cross-section with STI 
+; geometry based on:  P+ (0.43) | STI1 (0.47) | N+ (2.55) 
+;                     | STI2 (0.85) | P+ (5.75)  (all in µm) 
+;============================================================= 
+
+(sde:clear) 
+(sdegeo:set-default-boolean "ABA") ; newer shapes overwrite older 
+
+;============================== 
+; 1. GLOBAL PARAMETERS 
+;============================== 
+
+
+;------------- TOP IMPLANTS & STI  (widths in µm) ------------- 
+
+(define W_PpR   5.75)   ; right P+ width 
+
+(define W_STI2  0.85)   ; STI between N+ and right P+ 
+
+(define W_Nplus 2.55)   ; central N+ width 
+
+(define W_STI1  0.47)   ; STI between left P+ and N+ 
+
+(define W_PpL   0.43)   ; left P+ width 
+
+  
+
+; Right boundary at xR, move leftwards 
+
+(define xR 0.0) 
+
+  
+
+; right P+ 
+
+(define x_PpR_R xR) 
+
+(define x_PpR_L (- x_PpR_R W_PpR)) 
+
+  
+
+; STI2 (left of right P+) 
+
+(define x_STI2_R x_PpR_L) 
+
+(define x_STI2_L (- x_STI2_R W_STI2)) 
+
+  
+
+; N+ (left of STI2) 
+
+(define x_Np_R x_STI2_L) 
+
+(define x_Np_L (- x_Np_R W_Nplus)) 
+
+  
+
+; STI1 (left of N+) 
+
+(define x_STI1_R x_Np_L) 
+
+(define x_STI1_L (- x_STI1_R W_STI1)) 
+
+  
+
+; left P+ (left-most) 
+
+(define x_PpL_R x_STI1_L) 
+
+(define x_PpL_L (- x_PpL_R W_PpL)) 
+
+  
+
+; total lateral span (positive width, just for reference) 
+
+(define Lx (- x_PpL_L)) ; ~10.05 µm, but note x_PpL_L is negative 
+
+  
+
+;------------- WELLS (widths, right → left) ------------------- 
+
+(define W_centNW 5.00) 
+
+(define W_Pwell  1.50) 
+
+(define W_sideNW 2.75) 
+
+(define W_deepNW 7.80) 
+
+  
+
+; central N-well starts at right boundary, extends left 
+
+(define x_centNW_R xR) 
+
+(define x_centNW_L (- x_centNW_R W_centNW)) 
+
+  
+
+; P-well to the left of central N-well 
+
+(define x_PW_R x_centNW_L) 
+
+(define x_PW_L (- x_PW_R W_Pwell)) 
+
+  
+
+; side N-well to the left of P-well 
+
+(define x_sideNW_R x_PW_L) 
+
+(define x_sideNW_L (- x_sideNW_R W_sideNW)) 
+
+  
+
+; deep N-well widest, also starting at right 
+
+(define x_DNW_R xR) 
+
+(define x_DNW_L (- x_DNW_R W_deepNW)) 
+
+;------------- VERTICAL DIMENSIONS (µm) ----------------------- 
+
+(define T_si 4.0)              ; total silicon thickness (bottom=0, top=T_si) 
+
+  
+
+; wells: central N-well, P-well, side N-well (same depth for now) 
+
+(define y_centNW_bot 1.5) 
+
+(define y_centNW_top 3.5) 
+
+  
+
+(define y_PW_bot    y_centNW_bot) 
+
+(define y_PW_top    y_centNW_top) 
+
+  
+
+(define y_sideNW_bot y_centNW_bot) 
+
+(define y_sideNW_top y_centNW_top) 
+
+  
+
+; deep N-well depth 
+
+(define y_DNW_bot 0.5) 
+
+(define y_DNW_top 3.3) 
+
+  
+
+; STI depth (trench from surface downwards) 
+
+(define T_STI     1.0)           ; editable later 
+
+(define y_STI_bot (- T_si T_STI)) ; STI from y_STI_bot .. T_si (3.0 .. 4.0) 
+
+  
+
+; P+ and N+ implant depths (near surface) 
+
+(define y_Pplus_bot (- T_si 0.4)) ; 3.6 
+
+(define y_Pplus_top T_si) 
+
+  
+
+(define y_Nplus_bot y_Pplus_bot) 
+
+(define y_Nplus_top y_Pplus_top) 
+
+  
+
+;------------- DOPING LEVELS (cm^-3) -------------------------- 
+
+(define NA_sub    1e15)       ; P-substrate background 
+
+(define ND_Nwell  2.21e17)    ; N-well doping 
+
+(define NA_Pwell  5e16)       ; P-well 
+
+(define ND_DeepNW 1e17)       ; deep N-well 
+
+(define NA_Pplus  1e19)       ; P+ 
+
+(define ND_Nplus  1e19)       ; N+ 
+
+  
+
+;------------- MESH SIZES (µm) -------------------------------- 
+
+(define hmax 0.2) 
+
+(define hmin 0.02) 
+
+;============================== 
+
+; 2. GEOMETRY 
+
+;============================== 
+
+  
+
+;--- Silicon body / substrate (single region) --- 
+
+(sdegeo:create-rectangle 
+
+  (position x_PpL_L 0.0 0.0) 
+
+  (position xR      T_si 0.0) 
+
+  "Silicon" "SiBody") 
+
+  
+
+;--- STI trenches (SiO2, carve from surface down) --- 
+
+; STI1 between left P+ and N+ 
+
+(sdegeo:create-rectangle 
+
+  (position x_STI1_L y_STI_bot 0.0) 
+
+  (position x_STI1_R T_si      0.0) 
+
+  "Oxide" "STI_1") 
+
+  
+
+; STI2 between N+ and right P+ 
+
+(sdegeo:create-rectangle 
+
+  (position x_STI2_L y_STI_bot 0.0) 
+
+  (position x_STI2_R T_si      0.0) 
+
+  "Oxide" "STI_2") 
+
+;============================== 
+
+; 3. CONTACTS 
+
+;============================== 
+
+  
+
+; insert vertices for contacts (bottom + top centers) 
+
+(sdegeo:insert-vertex (position (/ (+ x_PpL_L xR) 2.0) 0.0    0.0)) ; bottom 
+
+(sdegeo:insert-vertex (position (/ (+ x_PpL_L x_PpL_R) 2.0) T_si 0.0)) ; left P+ 
+
+(sdegeo:insert-vertex (position (/ (+ x_Np_L   x_Np_R ) 2.0) T_si 0.0)) ; N+ 
+
+(sdegeo:insert-vertex (position (/ (+ x_PpR_L  x_PpR_R) 2.0) T_si 0.0)) ; right P+ 
+
+  
+
+; substrate contact at bottom 
+
+(sdegeo:define-contact-set "Substrate" 4 (color:rgb 0 0 1) "##") 
+
+(sdegeo:set-current-contact-set "Substrate") 
+
+(sdegeo:define-2d-contact 
+
+  (find-edge-id (position (/ (+ x_PpL_L xR) 2.0) 0.0 0.0)) 
+
+  "Substrate") 
+
+  
+
+; left P+ anode 
+
+(sdegeo:define-contact-set "Pplus_left" 4 (color:rgb 1 0 0) "##") 
+
+(sdegeo:set-current-contact-set "Pplus_left") 
+
+(sdegeo:define-2d-contact 
+
+  (find-edge-id 
+
+    (position (/ (+ x_PpL_L x_PpL_R) 2.0) T_si 0.0)) 
+
+  "Pplus_left") 
+
+  
+
+; central N+ cathode 
+
+(sdegeo:define-contact-set "Nplus_central" 4 (color:rgb 0 1 0) "##") 
+
+(sdegeo:set-current-contact-set "Nplus_central") 
+
+(sdegeo:define-2d-contact 
+
+  (find-edge-id 
+
+    (position (/ (+ x_Np_L x_Np_R) 2.0) T_si 0.0)) 
+
+  "Nplus_central") 
+
+  
+
+; right P+ anode 
+
+(sdegeo:define-contact-set "Pplus_right" 4 (color:rgb 1 0 1) "##") 
+
+(sdegeo:set-current-contact-set "Pplus_right") 
+
+(sdegeo:define-2d-contact 
+
+  (find-edge-id 
+
+    (position (/ (+ x_PpR_L x_PpR_R) 2.0) T_si 0.0)) 
+
+  "Pplus_right") 
+
+;============================== 
+
+; 4. DOPING PROFILES 
+
+;============================== 
+
+  
+
+;--- background P-substrate (whole SiBody region) --- 
+
+(sdedr:define-constant-profile 
+
+  "PsubProf" "BoronActiveConcentration" NA_sub) 
+
+(sdedr:define-constant-profile-region 
+
+  "PsubPlace" "PsubProf" "SiBody") 
+
+  
+
+;--- Deep N-well --- 
+
+(sdedr:define-refeval-window "DeepNWWin" "Rectangle" 
+
+  (position x_DNW_L y_DNW_bot 0.0) 
+
+  (position x_DNW_R y_DNW_top 0.0)) 
+
+  
+
+(sdedr:define-constant-profile 
+
+  "DeepNWProf" "PhosphorusActiveConcentration" ND_DeepNW) 
+
+(sdedr:define-constant-profile-placement 
+
+  "DeepNWPlace" "DeepNWProf" "DeepNWWin") 
+
+  
+
+;--- Central N-well --- 
+
+(sdedr:define-refeval-window "CentNWWin" "Rectangle" 
+
+  (position x_centNW_L y_centNW_bot 0.0) 
+
+  (position x_centNW_R y_centNW_top 0.0)) 
+
+  
+
+(sdedr:define-constant-profile 
+
+  "CentNWProf" "PhosphorusActiveConcentration" ND_Nwell) 
+
+(sdedr:define-constant-profile-placement 
+
+  "CentNWPlace" "CentNWProf" "CentNWWin") 
+
+  
+
+;--- P-well --- 
+
+(sdedr:define-refeval-window "PwellWin" "Rectangle" 
+
+  (position x_PW_L y_PW_bot 0.0) 
+
+  (position x_PW_R y_PW_top 0.0)) 
+
+  
+
+(sdedr:define-constant-profile 
+
+  "PwellProf" "BoronActiveConcentration" NA_Pwell) 
+
+(sdedr:define-constant-profile-placement 
+
+  "PwellPlace" "PwellProf" "PwellWin") 
+
+ 
+
+;--- Side N-well --- 
+
+(sdedr:define-refeval-window "SideNWWin" "Rectangle" 
+
+  (position x_sideNW_L y_sideNW_bot 0.0) 
+
+  (position x_sideNW_R y_sideNW_top 0.0)) 
+
+  
+
+(sdedr:define-constant-profile 
+
+  "SideNWProf" "PhosphorusActiveConcentration" ND_Nwell) 
+
+(sdedr:define-constant-profile-placement 
+
+  "SideNWPlace" "SideNWProf" "SideNWWin") 
+
+  
+
+;--- P+ implants (left & right) --- 
+
+(sdedr:define-refeval-window "PplusLWin" "Rectangle" 
+
+  (position x_PpL_L y_Pplus_bot 0.0) 
+
+  (position x_PpL_R y_Pplus_top 0.0)) 
+
+  
+
+(sdedr:define-refeval-window "PplusRWin" "Rectangle" 
+
+  (position x_PpR_L y_Pplus_bot 0.0) 
+
+  (position x_PpR_R y_Pplus_top 0.0)) 
+
+  
+
+(sdedr:define-constant-profile 
+
+  "PplusProf" "BoronActiveConcentration" NA_Pplus) 
+
+  
+
+(sdedr:define-constant-profile-placement 
+
+  "PplusLPlace" "PplusProf" "PplusLWin") 
+
+(sdedr:define-constant-profile-placement 
+
+  "PplusRPlace" "PplusProf" "PplusRWin") 
+
+  
+
+;--- N+ central implant --- 
+
+(sdedr:define-refeval-window "NplusWin" "Rectangle" 
+
+  (position x_Np_L y_Nplus_bot 0.0) 
+
+  (position x_Np_R y_Nplus_top 0.0)) 
+
+  
+
+(sdedr:define-constant-profile 
+
+  "NplusProf" "PhosphorusActiveConcentration" ND_Nplus) 
+
+(sdedr:define-constant-profile-placement 
+
+  "NplusPlace" "NplusProf" "NplusWin") 
+
+;============================== 
+
+; 5. MESH REFINEMENT 
+
+;============================== 
+
+  
+
+; whole device domain 
+
+(sdedr:define-refeval-window "WholeDom" "Rectangle" 
+
+  (position x_PpL_L 0.0 0.0) 
+
+  (position xR      T_si 0.0)) 
+
+  
+
+(sdedr:define-refinement-size "WholeDomSize" hmax hmax hmin hmin) 
+
+(sdedr:define-refinement-placement 
+
+  "WholeDomPlace" "WholeDomSize" "WholeDom") 
+
+  
+
+; finer mesh around multiplication region (upper wells) 
+
+(sdedr:define-refeval-window "JunctionWin" "Rectangle" 
+
+  (position x_sideNW_L y_centNW_bot 0.0) 
+
+  (position x_centNW_R T_si        0.0)) 
+
+  
+
+(sdedr:define-refinement-size 
+
+  "JunctionSize" 
+
+  (/ hmax 5.0) (/ hmax 5.0) (/ hmin 5.0) (/ hmin 5.0)) 
+
+  
+
+(sdedr:define-refinement-placement 
+
+  "JunctionPlace" "JunctionSize" "JunctionWin") 
+
+  
+
+;============================== 
+; 6. BUILD MESH 
+;============================== 
+
+(sde:build-mesh "snmesh" "-a -c boxmethod" "spad") 
+
+;------------------ end of file ------------------------------- 
